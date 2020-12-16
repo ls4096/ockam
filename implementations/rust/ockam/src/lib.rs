@@ -9,5 +9,5 @@ pub use ockam_kex as kex;
 // pub use ockam_no_std_traits as no_std_traits;
 // pub use ockam_node as node;
 // pub use ockam_queue as queue;
-// pub use ockam_queue_topic as queue_topic;
+// pub use ockam_queue_topic as topic;
 pub use ockam_vault as vault;

@@ -6,10 +6,11 @@ use core::ops::Deref;
 use ockam::message::{
     varint_size, Address, AddressType, Codec, Message, RouterAddress, MAX_MESSAGE_SIZE,
 };
-use ockam_no_std_traits::{EnqueueMessage, Poll, ProcessMessage};
+use ockam_no_std_traits::{Poll, ProcessMessage};
 use std::io;
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use ockam_queue::Queue;
 
 pub struct TcpWorker {
     stream: TcpStream,
@@ -22,7 +23,7 @@ impl ProcessMessage for TcpWorker {
     fn process_message(
         &mut self,
         mut message: Message,
-        queue_ref: Rc<RefCell<dyn EnqueueMessage>>,
+        queue_ref: Rc<RefCell<dyn Queue<Message>>>,
     ) -> Result<bool, String> {
         message.onward_route.addresses.remove(0);
         let local_address = Address::TcpAddress(self.stream.local_addr().unwrap());
@@ -49,7 +50,7 @@ impl ProcessMessage for TcpWorker {
 impl Poll for TcpWorker {
     fn poll(
         &mut self,
-        enqueue_message_ref: Rc<RefCell<dyn EnqueueMessage>>,
+        queue_ref: Rc<RefCell<dyn Queue<Message>>>,
     ) -> Result<bool, String> {
         self.stream.set_nonblocking(true);
         let mut tcp_buff: [u8; MAX_MESSAGE_SIZE] = [0u8; MAX_MESSAGE_SIZE];
@@ -82,7 +83,7 @@ impl Poll for TcpWorker {
                     self.message[self.offset..self.message_length]
                         .clone_from_slice(&tcp_vec[0..bytes_to_clone]);
                     tcp_vec = tcp_vec.split_off(bytes_to_clone);
-                    self.decode_and_route_message(enqueue_message_ref.clone())?;
+                    self.decode_and_route_message(queue_ref.clone())?;
                     self.offset = 0;
                     self.message_length = 0;
                 }
@@ -121,7 +122,7 @@ impl TcpWorker {
 
     fn decode_and_route_message(
         &mut self,
-        enqueue_message_ref: Rc<RefCell<dyn EnqueueMessage>>,
+        queue_ref: Rc<RefCell<dyn Queue<Message>>>,
     ) -> Result<bool, String> {
         match Message::decode(&self.message[0..self.message_length]) {
             Ok((mut m_decoded, _)) => {
@@ -136,9 +137,9 @@ impl TcpWorker {
                     self.send_message(m_decoded);
                     Ok(true)
                 } else {
-                    let em = enqueue_message_ref.clone();
-                    let mut em = em.deref().borrow_mut();
-                    em.enqueue_message(m_decoded);
+                    let em = queue_ref.clone();
+                    let mut queue = em.deref().borrow_mut();
+                    queue.enqueue(m_decoded);
                     Ok(true)
                 }
             }

@@ -14,3 +14,4 @@ lto = true
 
 [dependencies]
 ockam = { version = "0.1", path = "../ockam" }
+ockam-queue = { version = "0.1", path = "../queue" }

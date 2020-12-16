@@ -1,8 +1,9 @@
 [package]
-name = "ockam-queue-topic"
+name = "ockam-topic"
 version = "0.1.0"
 authors = ["Ockam Developers"]
 edition = "2018"
 
 [dependencies]
+ockam-queue = { path = "../queue", version = "*" }
 hashbrown = "0.9.1"

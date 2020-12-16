@@ -4,6 +4,7 @@ use alloc::rc::Rc;
 use alloc::string::String;
 use core::cell::RefCell;
 use ockam::message::Message;
+use ockam_queue::Queue;
 
 /// ProcessMessage trait is for workers to process messages addressed to them
 ///
@@ -14,7 +15,7 @@ pub trait ProcessMessage {
     fn process_message(
         &mut self,
         message: Message, //todo - add context
-        enqueue: Rc<RefCell<dyn EnqueueMessage>>,
+        enqueue: Rc<RefCell<dyn Queue<Message>>>,
     ) -> Result<bool, String>;
 }
 pub type ProcessMessageHandle = Rc<RefCell<dyn ProcessMessage>>;
@@ -25,10 +26,7 @@ pub type ProcessMessageHandle = Rc<RefCell<dyn ProcessMessage>>;
 /// poll() will be called once each polling interval.
 pub trait Poll {
     //todo - add context
-    fn poll(&mut self, q_ref: Rc<RefCell<dyn EnqueueMessage>>) -> Result<bool, String>;
+    fn poll(&mut self, q_ref: Rc<RefCell<dyn Queue<Message>>>) -> Result<bool, String>;
 }
 pub type PollHandle = Rc<RefCell<dyn Poll>>;
 
-pub trait EnqueueMessage {
-    fn enqueue_message(&mut self, message: Message) -> Result<bool, String>;
-}

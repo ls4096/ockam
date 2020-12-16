@@ -7,7 +7,7 @@ use alloc::rc::Rc;
 use libc_print::*;
 use ockam::message::Message;
 use ockam::message::MAX_MESSAGE_SIZE;
-use ockam_no_std_traits::{EnqueueMessage, Poll, ProcessMessage};
+use ockam_no_std_traits::{Poll, ProcessMessage};
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::io;
@@ -15,6 +15,7 @@ use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::ops::Deref;
 use std::str::FromStr;
+use ockam_queue::{Enqueue, Queue};
 
 pub struct TcpManager {
     connections: HashMap<String, TcpWorker>,
@@ -88,7 +89,7 @@ impl ProcessMessage for TcpManager {
     fn process_message(
         &mut self,
         message: Message,
-        enqueue_message_ref: Rc<RefCell<dyn EnqueueMessage>>,
+        queue_ref: Rc<RefCell<dyn Queue<Message>>>,
     ) -> Result<bool, String> {
         // if we don't already have a connection for onward address, try to create one
         let address = &message.onward_route.addresses[0].address;
@@ -96,7 +97,7 @@ impl ProcessMessage for TcpManager {
             self.try_connect(&address.as_string());
         }
         if let Some(connection) = self.connections.get_mut(&address.as_string()) {
-            connection.process_message(message, enqueue_message_ref)?;
+            connection.process_message(message, queue_ref)?;
         } else {
             // todo - kick message back with error
             libc_println!("failed to connect to {:?}", address);
@@ -108,13 +109,13 @@ impl ProcessMessage for TcpManager {
 impl Poll for TcpManager {
     fn poll(
         &mut self,
-        enqueue_message_ref: Rc<RefCell<dyn EnqueueMessage>>,
+        queue_ref: Rc<RefCell<dyn Queue<Message>>>,
     ) -> Result<bool, String> {
         if matches!(self.listener, Some(_)) {
             self.accept_new_connections()?;
         }
         for (_, mut tcp_worker) in self.connections.iter_mut() {
-            tcp_worker.poll(enqueue_message_ref.clone())?;
+            tcp_worker.poll(queue_ref.clone())?;
         }
         Ok(true)
     }

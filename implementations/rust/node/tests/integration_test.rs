@@ -8,10 +8,11 @@ use core::cell::RefCell;
 use core::ops::Deref;
 use core::time;
 use ockam::message::{hex_vec_from_str, Address, Message, MessageType, Route, RouterAddress};
-use ockam_no_std_traits::{EnqueueMessage, Poll, ProcessMessage};
+use ockam_no_std_traits::{Poll, ProcessMessage};
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::thread;
+use ockam_queue::Queue;
 
 pub struct TestWorker {
     address: String,
@@ -32,7 +33,7 @@ impl TestWorker {
 impl Poll for TestWorker {
     fn poll(
         &mut self,
-        enqueue_message_ref: Rc<RefCell<dyn EnqueueMessage>>,
+        enqueue_message_ref: Rc<RefCell<dyn Queue<Message>>>,
     ) -> Result<bool, String> {
         println!("{} is polling", self.text);
         let msg_text = "sent to you by TestWorker".as_bytes();
@@ -54,7 +55,7 @@ impl Poll for TestWorker {
             message_body: msg_text.to_vec(),
         };
         let mut q = enqueue_message_ref.deref().borrow_mut();
-        q.enqueue_message(m)?;
+        q.enqueue(m);
         Ok(true)
     }
 }
@@ -63,7 +64,7 @@ impl ProcessMessage for TestWorker {
     fn process_message(
         &mut self,
         message: Message,
-        _q_ref: Rc<RefCell<dyn EnqueueMessage>>,
+        _q_ref: Rc<RefCell<dyn Queue<Message>>>,
     ) -> Result<bool, String> {
         self.count += 1;
         if self.count > 3 {
@@ -127,7 +128,7 @@ impl TestTcpWorker {
 impl Poll for TestTcpWorker {
     fn poll(
         &mut self,
-        enqueue_message_ref: Rc<RefCell<dyn EnqueueMessage>>,
+        queue_ref: Rc<RefCell<dyn Queue<Message>>>,
     ) -> Result<bool, String> {
         if self.count == 0 && self.is_initiator {
             let mut route = Route {
@@ -145,8 +146,8 @@ impl Poll for TestTcpWorker {
                 message_type: MessageType::Payload,
                 message_body: "hello".as_bytes().to_vec(),
             };
-            let mut q = enqueue_message_ref.deref().borrow_mut();
-            q.enqueue_message(m)?;
+            let mut q = queue_ref.deref().borrow_mut();
+            q.enqueue(m);
         }
         self.count += 1;
         Ok(true)
@@ -157,7 +158,7 @@ impl ProcessMessage for TestTcpWorker {
     fn process_message(
         &mut self,
         message: Message,
-        enqueue_message_ref: Rc<RefCell<dyn EnqueueMessage>>,
+        enqueue_message_ref: Rc<RefCell<dyn Queue<Message>>>,
     ) -> Result<bool, String> {
         if self.is_initiator {
             println!(
@@ -183,7 +184,7 @@ impl ProcessMessage for TestTcpWorker {
             {
                 let mut q = enqueue_message_ref.clone(); //rb
                 let mut q = q.deref().borrow_mut();
-                q.enqueue_message(m);
+                q.enqueue(m);
             }
             self.count += 1;
             Ok(true)

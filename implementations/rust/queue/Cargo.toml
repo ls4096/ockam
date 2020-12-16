@@ -13,5 +13,3 @@ lto = true
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-ockam-no-std-traits = { version = "0.1", path = "../no_std_traits" }
-ockam = { version = "0.1", path = "../ockam" }

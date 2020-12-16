@@ -1,15 +1,18 @@
 #![allow(unused)]
 #![no_std]
 extern crate alloc;
+
 use alloc::collections::VecDeque;
 use alloc::rc::Rc;
 use alloc::string::String;
-use core::cell::RefCell;
+use core::cell::{RefCell, RefMut};
 use core::ops::Deref;
+
 use libc_print::*;
+
 use ockam::message::{AddressType, Message};
-use ockam_no_std_traits::{EnqueueMessage, Poll, ProcessMessage, ProcessMessageHandle};
-use ockam_queue::Queue;
+use ockam_no_std_traits::{Poll, ProcessMessage, ProcessMessageHandle};
+use ockam_queue::{Enqueue, Queue};
 
 pub struct MessageRouter {
     handlers: [Option<ProcessMessageHandle>; 256],
@@ -35,23 +38,25 @@ impl MessageRouter {
 
     pub fn poll(
         &self,
-        mut enqueue_message_ref: Rc<RefCell<Queue<Message>>>,
+        mut queue_ref: Rc<RefCell<dyn Queue<Message>>>,
     ) -> Result<bool, String> {
         loop {
             {
                 let message: Option<Message> = {
-                    let mut q = enqueue_message_ref.clone();
-                    let mut q = q.deref().borrow_mut();
-                    q.queue.remove(0)
+                    let mut qr = queue_ref.clone();
+                    let mut queue = qr.deref().borrow_mut();
+                    queue.dequeue()
                 };
                 match message {
                     Some(m) => {
                         let address_type = m.onward_route.addresses[0].a_type as usize;
-                        match &self.handlers[address_type] {
+                        let maybe_handler : &Option<ProcessMessageHandle> =  &self.handlers[address_type];
+                        match maybe_handler {
                             Some(h) => {
                                 let handler = h.clone();
                                 let mut handler = handler.deref().borrow_mut();
-                                match handler.process_message(m, enqueue_message_ref.clone()) {
+
+                                match handler.process_message(m, queue_ref.clone()) {
                                     Ok(keep_going) => {
                                         if !keep_going {
                                             return Ok(false);

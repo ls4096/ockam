@@ -9,12 +9,12 @@ use core::time;
 use ockam::message::{AddressType, Message};
 use ockam_message_router::MessageRouter;
 use ockam_no_std_traits::{PollHandle, ProcessMessageHandle};
-use ockam_queue::Queue;
+use ockam_queue::{Queue, MemQueue};
 use ockam_worker_manager::WorkerManager;
 use std::thread;
 
 pub struct Node {
-    message_queue: Rc<RefCell<Queue<Message>>>,
+    message_queue: Rc<RefCell<dyn Queue<Message>>>,
     message_router: MessageRouter,
     worker_manager: Rc<RefCell<WorkerManager>>,
     modules_to_poll: VecDeque<PollHandle>,
@@ -24,7 +24,7 @@ pub struct Node {
 impl Node {
     pub fn new(role: &str) -> Result<Self, String> {
         Ok(Node {
-            message_queue: Rc::new(RefCell::new(Queue::new())),
+            message_queue: Rc::new(RefCell::new(MemQueue::new(100))),
             message_router: MessageRouter::new().unwrap(),
             worker_manager: Rc::new(RefCell::new(WorkerManager::new())),
             modules_to_poll: VecDeque::new(),

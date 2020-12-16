@@ -7,7 +7,8 @@ use core::cell::RefCell;
 use core::ops::Deref;
 use hashbrown::HashMap;
 use ockam::message::Message;
-use ockam_no_std_traits::{EnqueueMessage, Poll, PollHandle, ProcessMessage, ProcessMessageHandle};
+use ockam_no_std_traits::{Poll, PollHandle, ProcessMessage, ProcessMessageHandle};
+use ockam_queue::Queue;
 
 pub struct WorkerManager {
     message_handlers: HashMap<String, ProcessMessageHandle>,
@@ -42,12 +43,12 @@ impl ProcessMessage for WorkerManager {
     fn process_message(
         &mut self,
         message: Message,
-        enqueue_ref: Rc<RefCell<dyn EnqueueMessage>>,
+        queue_ref: Rc<RefCell<dyn Queue<Message>>>,
     ) -> Result<bool, String> {
         let address = message.onward_route.addresses[0].address.as_string();
         if let Some(h) = self.message_handlers.get_mut(&address) {
             let mut handler = h.deref().borrow_mut();
-            handler.process_message(message, enqueue_ref.clone()) //rb
+            handler.process_message(message, queue_ref.clone()) //rb
         } else {
             Err("message handler not found".into())
         }
@@ -55,7 +56,7 @@ impl ProcessMessage for WorkerManager {
 }
 
 impl Poll for WorkerManager {
-    fn poll(&mut self, q_ref: Rc<RefCell<dyn EnqueueMessage>>) -> Result<bool, String> {
+    fn poll(&mut self, q_ref: Rc<RefCell<dyn Queue<Message>>>) -> Result<bool, String> {
         for p in self.poll_handlers.iter_mut() {
             let mut handler = p.deref().borrow_mut();
             handler.poll(q_ref.clone())?;
