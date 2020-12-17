@@ -1,6 +1,5 @@
 #[macro_use]
 pub mod message;
-pub mod channel_refactor;
 pub mod secure_channel;
 pub mod system;
 

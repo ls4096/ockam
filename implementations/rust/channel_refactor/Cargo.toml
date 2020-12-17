@@ -1,0 +1,16 @@
+[package]
+name = "ockam-channel-refactor"
+version = "0.1.0"
+authors = ["Robin Budd <robin@ockam.io>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+ockam = { version = "0.1", path = "../ockam" }
+ockam-kex = { version = "0.1", path = "../kex", default-features = false }
+ockam-vault = { version = "0.1", path = "../vault/traits" }
+ockam-vault-software = { version = "0.1", path = "../vault/software", optional = true}
+ockam-no-std-traits = { version = "0.1", path = "../no_std_traits" }
+
+rand = "0.7"

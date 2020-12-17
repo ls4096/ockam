@@ -24,6 +24,7 @@ use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::thread;
+use ockam_channel_refactor::SecureChannel;
 
 pub struct TestWorker {
     address: String,
@@ -114,6 +115,7 @@ pub struct TestTcpWorker {
     count: usize,
     remote: Address,
     local_address: Vec<u8>,
+    channel_address: Option<Address>,
 }
 
 impl TransportListenCallback for TestTcpWorker {
@@ -140,7 +142,8 @@ impl TransportListenCallback for TestTcpWorker {
 
 impl SecureChannelConnectCallback for TestTcpWorker {
     fn secure_channel_callback(&mut self, address: Address) -> Result<bool, String> {
-        unimplemented!()
+        println!("in channel callback");
+        Ok(true)
     }
 }
 
@@ -158,6 +161,7 @@ impl TestTcpWorker {
                 count: 0,
                 remote: r,
                 local_address,
+                channel_address: None,
             }
         } else {
             TestTcpWorker {
@@ -166,6 +170,7 @@ impl TestTcpWorker {
                 count: 0,
                 remote: Address::TcpAddress(SocketAddr::from_str("127.0.0.1:4050").unwrap()),
                 local_address,
+                channel_address: None,
             }
         }
     }
@@ -292,13 +297,39 @@ pub fn initiator_thread() {
     n.register_transport(AddressType::Tcp, tcp_router.clone(), tcp_router.clone());
 
     // create connection
-    {
+    let tcp_connection = {
         let tcp = tcp_router.clone();
         let mut tcp = tcp.deref().borrow_mut();
         let tcp_connection = tcp.try_connect("127.0.0.1:4052", Some(500)).unwrap();
-    }
+        tcp_connection
+    };
 
-    // request channel
+    // create vault, key exchanger, and request channel
+    // create the vault and key exchanger
+    let vault = Arc::new(Mutex::new(DefaultVault::default()));
+    let attributes = SecretAttributes {
+        stype: SecretType::Curve25519,
+        persistence: SecretPersistence::Persistent,
+        length: CURVE25519_SECRET_LENGTH,
+    };
+    let new_key_exchanger = XXNewKeyExchanger::new(
+        CipherSuite::Curve25519AesGcmSha256,
+        vault.clone(),
+        vault.clone(),
+    );
+    let channel = SecureChannel::create(
+        vault,
+        new_key_exchanger,
+        None,
+        None,
+        tcp_connection,
+        worker_ref.clone(),
+    ).unwrap();
+    let channel_address = channel.address_as_string();
+    let channel_ref = Rc::new(RefCell::new(channel));
+    let ch = channel_ref.clone();
+
+    n.register_worker(channel_address, Some(ch.clone()), Some(ch.clone()));
 
     n.run();
     return;

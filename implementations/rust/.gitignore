@@ -3,3 +3,4 @@ target
 .gitignore
 Cargo.lock
 ockamd_vault
+vault/file/__persistence_test/
