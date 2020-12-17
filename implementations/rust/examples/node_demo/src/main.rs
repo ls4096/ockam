@@ -5,8 +5,8 @@ use std::thread;
 use std::time::Duration;
 
 use hashbrown::HashMap;
-use rand::{RngCore, thread_rng};
 use rand::prelude::ThreadRng;
+use rand::{thread_rng, RngCore};
 
 use ockam::message::Address;
 use ockam_kex_xx::XXVault;
@@ -81,6 +81,10 @@ impl App {
         }
     }
 
+    fn get_actor(&self, address: &str) -> Option<&Rc<RefCell<Actor>>> {
+        self.actors.get(address.clone())
+    }
+
     fn generate_secret(&mut self, actor: &mut Actor) {
         let attribs = actor.secret_attributes();
         match self.vault.lock().unwrap().secret_generate(attribs) {
@@ -133,6 +137,9 @@ impl App {
             "Bob: {{ address: {}, pubkey: {} }}",
             bob_address, bob_pubkey
         );
+
+        let alice = self.get_actor(&alice_address).unwrap();
+        alice.borrow_mut().open_channel();
     }
 }
 

@@ -141,7 +141,7 @@ impl<I: KeyExchanger, R: KeyExchanger, E: NewKeyExchanger<I, R>> ChannelManager<
                     }
                     _ => return Err(Error::InvalidParam.into()),
                 },
-                Err(_) => {
+                Err(e) => {
                     got_message = false;
                 }
             }
