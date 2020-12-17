@@ -6,18 +6,31 @@ use alloc::string::String;
 use core::cell::RefCell;
 use core::ops::Deref;
 use core::time;
-use ockam::message::{AddressType, Message};
+use ockam::message::{Address, AddressType, Message};
+use ockam::vault::types::{
+    SecretAttributes, SecretPersistence, SecretType, CURVE25519_SECRET_LENGTH,
+};
 use ockam_message_router::MessageRouter;
-use ockam_no_std_traits::{PollHandle, ProcessMessageHandle};
+use ockam_no_std_traits::{
+    PollHandle, ProcessMessageHandle, SecureChannelConnectCallback, TransportListenCallback,
+};
 use ockam_queue::Queue;
+use ockam_tcp_router::tcp_router::TcpRouter;
+use ockam_vault_software::DefaultVault;
 use ockam_worker_manager::WorkerManager;
+use std::sync::{Arc, Mutex};
 use std::thread;
+
+pub enum Transport {
+    Tcp(Rc<TcpRouter>),
+}
 
 pub struct Node {
     message_queue: Rc<RefCell<Queue<Message>>>,
     message_router: MessageRouter,
     worker_manager: Rc<RefCell<WorkerManager>>,
     modules_to_poll: VecDeque<PollHandle>,
+    transports: VecDeque<Rc<RefCell<Transport>>>,
     _role: String,
 }
 
@@ -28,16 +41,16 @@ impl Node {
             message_router: MessageRouter::new().unwrap(),
             worker_manager: Rc::new(RefCell::new(WorkerManager::new())),
             modules_to_poll: VecDeque::new(),
+            transports: VecDeque::new(),
             _role: role.to_string(),
         })
     }
 
-    pub fn initialize_transport(&mut self, listen_address: Option<&str>) -> Result<bool, String> {
-        let tcp_transport = ockam_tcp_manager::tcp_manager::TcpManager::new(listen_address)?;
-        let tcp_transport = Rc::new(RefCell::new(tcp_transport));
-        self.message_router
-            .register_address_type_handler(AddressType::Tcp, tcp_transport.clone())?;
-        self.modules_to_poll.push_back(tcp_transport);
+    pub fn create_secure_channel(
+        &mut self,
+        route: Vec<Address>,
+        callback: Rc<dyn SecureChannelConnectCallback>,
+    ) -> Result<bool, String> {
         Ok(true)
     }
 
@@ -49,6 +62,18 @@ impl Node {
     ) -> Result<bool, String> {
         let mut wm = self.worker_manager.deref().borrow_mut();
         wm.register_worker(address, message_handler, poll_handler)
+    }
+
+    pub fn register_transport(
+        &mut self,
+        address_type: AddressType,
+        pmh: ProcessMessageHandle,
+        ph: PollHandle,
+    ) {
+        println!("registering transport");
+        self.message_router
+            .register_address_type_handler(address_type, pmh.clone());
+        self.modules_to_poll.push_back(ph.clone());
     }
 
     pub fn run(&mut self) -> Result<(), String> {

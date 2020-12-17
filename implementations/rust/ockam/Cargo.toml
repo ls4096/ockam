@@ -21,3 +21,4 @@ ockam-vault = { version = "0.1", path = "../vault/traits" }
 ockam-vault-software = { version = "0.1", path = "../vault/software", optional = true}
 ockam-vault-ffi = { version = "0.1", path = "../vault/ffi", optional = true }
 rand = "0.7"
+hashbrown = "0.9.1"

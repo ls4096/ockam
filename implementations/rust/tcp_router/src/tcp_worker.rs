@@ -147,6 +147,7 @@ impl TcpWorker {
     }
 
     fn send_message(&mut self, mut m: Message) -> Result<(), String> {
+        println!("tcp worker sending message");
         m.onward_route.addresses.remove(0);
         let local_address = Address::TcpAddress(self.stream.local_addr().unwrap());
         m.return_route
