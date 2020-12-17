@@ -1,24 +1,19 @@
 use std::cell::RefCell;
-
 use std::rc::Rc;
-
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
 use hashbrown::HashMap;
-
+use rand::{RngCore, thread_rng};
 use rand::prelude::ThreadRng;
-use rand::{thread_rng, RngCore};
-
-use crate::actor::{Actor, Addressable};
-use crate::log::{log_entries, log_error};
 
 use ockam::message::Address;
 use ockam_kex_xx::XXVault;
 use ockam_vault_software::DefaultVault;
-use std::net::SocketAddr;
-use std::str::FromStr;
+
+use crate::actor::{Actor, Addressable};
+use crate::log::{log_entries, log_error};
 
 pub mod actor;
 pub mod log;
@@ -58,21 +53,23 @@ impl App {
 
     fn create_anonymous_actor(&mut self) -> Option<&ActorHandle> {
         let id = hex::encode(self.rng.next_u32().to_le_bytes());
-        self.create_actor(&id)
+        self.create_actor(&id, "?")
     }
 
     fn create_client(&mut self) -> Option<&ActorHandle> {
         match self.create_anonymous_actor() {
             Some(server) => {
-                server.borrow_mut().create_client_transport();
+                let mut actor = server.borrow_mut();
+                actor.create_client_transport();
+                actor.create_channel_manager();
                 Some(server)
             }
             _ => None,
         }
     }
 
-    fn create_actor(&mut self, address: &str) -> Option<&ActorHandle> {
-        match Actor::new(self.vault.clone(), address.worker_address().unwrap()) {
+    fn create_actor(&mut self, address: &str, role: &str) -> Option<&ActorHandle> {
+        match Actor::new(self.vault.clone(), address.worker_address().unwrap(), role) {
             Some(mut actor) => {
                 self.generate_secret(&mut actor);
                 let actor_address = actor.address().as_string();
@@ -101,9 +98,9 @@ impl App {
     fn create_server(&mut self, socket_address: &str) -> Option<&ActorHandle> {
         match self.create_anonymous_actor() {
             Some(server) => {
-                server
-                    .borrow_mut()
-                    .create_server_transport(socket_address);
+                let mut actor = server.borrow_mut();
+                actor.create_server_transport(socket_address);
+                actor.create_channel_manager();
                 Some(server)
             }
             _ => None,

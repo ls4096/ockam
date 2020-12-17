@@ -1,6 +1,5 @@
-use std::net::SocketAddr;
 use std::str;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 
 use ockam::kex::CipherSuite;
 use ockam::message::Address;
@@ -9,13 +8,17 @@ use ockam::vault::types::{
     PublicKey, SecretAttributes, SecretPersistence, SecretType, CURVE25519_SECRET_LENGTH,
 };
 use ockam::vault::Secret;
-use ockam_kex_xx::{XXNewKeyExchanger, XXVault};
+use ockam_kex_xx::{XXNewKeyExchanger, XXVault, XXResponder, XXInitiator};
 use ockam_node::Node;
+use ockam::secure_channel::ChannelManager;
+
+type XXChannelManager = ChannelManager<XXInitiator, XXResponder, XXNewKeyExchanger>;
 
 pub struct Actor {
     vault: Arc<Mutex<dyn XXVault + Send>>,
     address: Address,
     secret: Option<Arc<Box<dyn Secret>>>,
+    channel_manager: Option<ChannelManager<XXInitiator, XXResponder, XXNewKeyExchanger>>,
     node: Node,
 }
 
@@ -36,6 +39,7 @@ impl Addressable for Actor {
 }
 
 impl Actor {
+
     pub fn secret_attributes(&self) -> SecretAttributes {
         SecretAttributes {
             stype: SecretType::Curve25519,
@@ -48,9 +52,9 @@ impl Actor {
         self.secret = Some(Arc::new(secret));
     }
 
-    pub fn secret(&self) -> Option<&Box<dyn Secret>> {
+    pub fn secret(&self) -> Option<Arc<Box<dyn Secret>>> {
         match &self.secret {
-            Some(s) => Some(&s),
+            Some(s) => Some(s.clone()),
             _ => None,
         }
     }
@@ -64,7 +68,14 @@ impl Actor {
     }
 
     fn create_transport(&mut self, listen_address: Option<&str>) {
-        self.node.initialize_transport(listen_address);
+        match self.node.initialize_transport(listen_address) {
+            Err(e) => panic!(e),
+            _ => ()
+        }
+    }
+
+    fn set_channel_manager(&mut self, channel_manager: XXChannelManager) {
+        self.channel_manager = Some(channel_manager);
     }
 
     pub fn connect(&mut self, _address_str: &str) -> Option<Address> {
@@ -79,14 +90,32 @@ impl Actor {
         )
     }
 
-    pub fn new(vault: Arc<Mutex<dyn XXVault + Send>>, address: Address) -> Option<Self> {
-        let node = Node::new("alice").unwrap();
+    pub fn create_channel_manager(&mut self) {
+        let (channel_tx, channel_rx) = mpsc::channel();
+        let (router_tx, _router_rx) = mpsc::channel();
+
+        let channel_manager = XXChannelManager::new(
+            channel_rx,
+            channel_tx.clone(),
+            router_tx.clone(),
+            self.vault.clone(),
+            self.default_new_key_exchanger(),
+            self.secret(),
+            None,
+        ).unwrap();
+
+        self.set_channel_manager(channel_manager);
+    }
+
+    pub fn new(vault: Arc<Mutex<dyn XXVault + Send>>, address: Address, role: &str) -> Option<Self> {
+        let node = Node::new(role).unwrap();
 
         let actor = Actor {
             vault,
             address,
             node,
             secret: None,
+            channel_manager: None,
         };
         Some(actor)
     }
@@ -97,16 +126,12 @@ impl Actor {
         self.node.poll_all().unwrap()
     }
 
-    pub fn open_channel(&mut self, _address: Address) {
-
-    }
-
     pub fn public_key(&self) -> Option<PublicKey> {
         let key = self
             .vault
             .lock()
             .unwrap()
-            .secret_public_key_get(self.secret().unwrap());
+            .secret_public_key_get(&*self.secret().unwrap().clone());
         match key {
             Ok(public_key) => Some(public_key),
             _ => None,
