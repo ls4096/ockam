@@ -7,3 +7,22 @@ edition = "2018"
 [[example]]
 name = "noop"
 path = "noop/src/main.rs"
+
+[[example]]
+name = "node_demo"
+path = "node_demo/src/main.rs"
+
+[dependencies]
+lazy_static = "*"
+hex = "0.4.2"
+ockam = {path = "../ockam", version = "*" }
+ockam-kex = {path = "../kex/traits", version = "*"}
+ockam-kex-xx = {path = "../kex/xx", version = "*"}
+ockam-common = { path = "../common", version = "*" }
+ockam-transport = { path = "../transport", version ="*"}
+ockam-router = { path = "../router", version ="*" }
+ockam-node = { path = "../node", version = "*"}
+ockam-vault-software = { path = "../vault/software", version = "*"}
+zeroize = { version = "1.1", features = ["zeroize_derive"] }
+hashbrown = "*"
+rand = "*"

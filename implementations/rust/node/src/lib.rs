@@ -23,13 +23,19 @@ pub struct Node {
 
 impl Node {
     pub fn new(role: &str) -> Result<Self, String> {
-        Ok(Node {
+        let mut node = Node {
             message_queue: Rc::new(RefCell::new(MemQueue::new(100))),
             message_router: MessageRouter::new().unwrap(),
             worker_manager: Rc::new(RefCell::new(WorkerManager::new())),
             modules_to_poll: VecDeque::new(),
             _role: role.to_string(),
-        })
+        };
+
+        node.message_router
+            .register_address_type_handler(AddressType::Worker, node.worker_manager.clone())?;
+        node.modules_to_poll.push_back(node.worker_manager.clone());
+
+        Ok(node)
     }
 
     pub fn initialize_transport(&mut self, listen_address: Option<&str>) -> Result<bool, String> {
@@ -51,40 +57,33 @@ impl Node {
         wm.register_worker(address, message_handler, poll_handler)
     }
 
-    pub fn run(&mut self) -> Result<(), String> {
-        self.message_router
-            .register_address_type_handler(AddressType::Worker, self.worker_manager.clone())?;
-        self.modules_to_poll.push_back(self.worker_manager.clone());
+    pub fn poll_all(&mut self) -> Result<(), String> {
+        match self.message_router.poll(self.message_queue.clone()) {
+            Err(s) => {
+                return Err(s);
+            }
+            _ => (),
+        }
 
-        let mut stop = false;
-        loop {
-            match self.message_router.poll(self.message_queue.clone()) {
-                Ok(keep_going) => {
-                    if !keep_going {
-                        break;
-                    }
-                }
+        for p_ref in self.modules_to_poll.iter() {
+            let p = p_ref.clone();
+            let mut p = p.deref().borrow_mut();
+            match p.poll(self.message_queue.clone()) {
                 Err(s) => {
                     return Err(s);
-                }
+                },
+                _ => ()
             }
-            for p_ref in self.modules_to_poll.iter() {
-                let p = p_ref.clone();
-                let mut p = p.deref().borrow_mut();
-                match p.poll(self.message_queue.clone()) {
-                    Ok(keep_going) => {
-                        if !keep_going {
-                            stop = true;
-                            break;
-                        }
-                    }
-                    Err(s) => {
-                        return Err(s);
-                    }
-                }
-            }
-            if stop {
-                break;
+        }
+        Ok(())
+    }
+
+    pub fn run(&mut self) -> Result<(), String> {
+
+        loop {
+            match self.poll_all() {
+                Err(e) => return Err(e),
+                _ => ()
             }
             thread::sleep(time::Duration::from_millis(100));
         }
