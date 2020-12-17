@@ -125,7 +125,10 @@ impl App {
             alice_address, alice_pubkey
         );
 
-        let mut create_server = |address: &str| -> (String, String) {
+        let alice = self.get_actor(&alice_address).unwrap();
+        alice.borrow_mut().open_channel();
+
+/*        let mut create_server = |address: &str| -> (String, String) {
             let server_ref = self.create_server(address).unwrap();
             let server = server_ref.borrow();
             (server.address().as_string(), server.public_key_string())
@@ -136,10 +139,8 @@ impl App {
         println!(
             "Bob: {{ address: {}, pubkey: {} }}",
             bob_address, bob_pubkey
-        );
+        );*/
 
-        let alice = self.get_actor(&alice_address).unwrap();
-        alice.borrow_mut().open_channel();
     }
 }
 

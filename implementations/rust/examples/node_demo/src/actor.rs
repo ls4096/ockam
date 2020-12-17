@@ -4,16 +4,19 @@ use std::sync::{mpsc, Arc, Mutex};
 use crate::log::log_error;
 use ockam::kex::CipherSuite;
 use ockam::message::Address::ChannelAddress;
-use ockam::message::{Address, Route, RouterAddress, Codec};
+use ockam::message::{Address, Codec, Route, RouterAddress};
 use ockam::secure_channel::ChannelManager;
-use ockam::system::commands::{ChannelCommand, OckamCommand, WorkerCommand, RouterCommand};
+use ockam::secure_channel::CHANNEL_ZERO;
+use ockam::system::commands::{ChannelCommand, OckamCommand, RouterCommand, WorkerCommand};
 use ockam::vault::types::{
     PublicKey, SecretAttributes, SecretPersistence, SecretType, CURVE25519_SECRET_LENGTH,
 };
 use ockam::vault::Secret;
 use ockam_kex_xx::{XXInitiator, XXNewKeyExchanger, XXResponder, XXVault};
 use ockam_node::Node;
-use std::sync::mpsc::{SendError, Sender, Receiver};
+use std::sync::mpsc::{Receiver, SendError, Sender};
+use ockam::message::AddressType::Channel;
+use ockam::system::commands::ChannelCommand::{SendMessage, ReceiveMessage};
 
 type XXChannelManager = ChannelManager<XXInitiator, XXResponder, XXNewKeyExchanger>;
 
@@ -101,47 +104,34 @@ impl Actor {
                     self.secret(),
                     None,
                 )
-                    .unwrap();
+                .unwrap();
 
                 self.channel_manager = Some(channel_manager);
                 self.channel_manager_tx = Some(channel_tx.clone());
-            },
-            _ =>()
+            }
+            _ => (),
         };
-
-
     }
 
     pub fn open_channel(&mut self) {
-        /* fn initiate_new_channel(
-            &mut self,
-            route: Route,
-            return_address: Address,
-        ) -> OckamResult<Address> */
+        let mut onward_route = Route { addresses: vec![] };
+        onward_route
+            .addresses
+            .push(RouterAddress::channel_router_address_from_str(CHANNEL_ZERO).unwrap());
 
-        match &self.channel_manager {
-            Some(manager) => {
-                // todo fill out
-                let addr = RouterAddress::from_address(self.address.clone()).unwrap();
+        let command = OckamCommand::Channel(ChannelCommand::Initiate(
+            onward_route,
+            self.address.clone(),
+            self.secret(),
+        ));
 
-                let route = Route { addresses: vec![addr] };
-
-                // todo verify
-                let address = ChannelAddress(vec![0]);
-
-                let command =
-                    OckamCommand::Channel(ChannelCommand::Initiate(route, address, self.secret()));
-
-                match &self.channel_manager_tx {
-                    Some(tx) => match tx.send(command) {
-                        Err(e) => log_error(e.to_string()),
-                        _ => (),
-                    },
-                    _ => (),
-                };
-            }
-            None => panic!("Attempted to create a Channel without a ChannelManager"),
-        }
+        match &self.channel_manager_tx {
+            Some(tx) => match tx.send(command) {
+                Err(e) => log_error(e.to_string()),
+                _ => (),
+            },
+            _ => (),
+        };
     }
 
     pub fn new(
@@ -161,7 +151,7 @@ impl Actor {
             channel_manager: None,
             channel_manager_tx: None,
             router_tx: Some(router_tx),
-            router_rx: Some(router_rx)
+            router_rx: Some(router_rx),
         };
         Some(actor)
     }
@@ -172,20 +162,48 @@ impl Actor {
         self.node.poll_all().unwrap();
 
         match &mut self.channel_manager {
-            Some(manager) => { manager.poll(); },
-            _ =>()
+            Some(manager) => {
+                manager.poll();
+            }
+            _ => (),
         };
 
+        // Hacked routing.
+        // TODO replace with real routing.
+        // TODO replace address type matching with Node trait handlers.
         match &self.router_rx {
             Some(router) => {
                 match router.try_recv() {
                     Ok(command) => {
-                        println!("{:?}",command); // TODO for now need to bridge this back in to new Node and old ChannelManager
-                    },
-                    _ => ()
+                        println!("{:?}", command);
+                        match command {
+                            OckamCommand::Router(sub_command) => {
+                                println!("Router {:?}", sub_command);
+                                match sub_command {
+                                    RouterCommand::SendMessage(message) => {
+                                        let first_address = message.return_route.addresses.first().unwrap();
+                                        match &first_address.a_type {
+                                            Channel => {
+                                                match &self.channel_manager_tx {
+                                                    Some(tx) => {
+                                                        tx.send(OckamCommand::Channel(ReceiveMessage(message)));
+                                                    },
+                                                    _ => ()
+                                                };
+                                            },
+                                            _ => ()
+                                        }
+                                    }
+                                    _ => (),
+                                }
+                            }
+                            _ => (),
+                        }
+                    }
+                    _ => (),
                 }
-            },
-            _ => ()
+            }
+            _ => (),
         }
     }
 
