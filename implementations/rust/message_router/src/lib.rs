@@ -7,10 +7,13 @@ use alloc::string::String;
 use core::cell::RefCell;
 use core::ops::Deref;
 use libc_print::*;
-use ockam::message::{AddressType, Message};
+use ockam::message::{AddressType, Message, RouterAddress, Route};
 use ockam::system::commands::WorkerCommand::AddLine;
 use ockam_no_std_traits::{EnqueueMessage, Poll, ProcessMessage, ProcessMessageHandle};
 use ockam_queue::Queue;
+use ockam::message::Address::WorkerAddress;
+use alloc::vec::Vec;
+use alloc::vec;
 
 pub struct MessageRouter {
     handlers: [Option<ProcessMessageHandle>; 256],
@@ -40,13 +43,21 @@ impl MessageRouter {
     ) -> Result<bool, String> {
         loop {
             {
-                let message: Option<Message> = {
+                let mut message: Option<Message> = {
                     let mut q = enqueue_message_ref.clone();
                     let mut q = q.deref().borrow_mut();
                     q.queue.remove(0)
                 };
                 match message {
-                    Some(m) => {
+                    Some(mut m) => {
+                        if m.onward_route.addresses.len() == 0 {
+                            let address0 = WorkerAddress(vec![0u8;4]);
+                            m.onward_route = Route{addresses: vec![RouterAddress::from_address(address0).unwrap()]};
+                        }
+                        libc_println!("Message router");
+                        m.onward_route.print_route();
+                        libc_println!("...");
+                        m.return_route.print_route();
                         let address_type = m.onward_route.addresses[0].a_type as usize;
                         match &self.handlers[address_type] {
                             Some(h) => {

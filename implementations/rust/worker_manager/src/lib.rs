@@ -8,9 +8,10 @@ use core::ops::Deref;
 use hashbrown::HashMap;
 use ockam::message::Message;
 use ockam_no_std_traits::{EnqueueMessage, Poll, PollHandle, ProcessMessage, ProcessMessageHandle};
+use alloc::prelude::v1::Vec;
 
 pub struct WorkerManager {
-    message_handlers: HashMap<String, ProcessMessageHandle>,
+    message_handlers: HashMap<Vec<u8>, ProcessMessageHandle>,
     poll_handlers: VecDeque<PollHandle>,
 }
 
@@ -24,7 +25,7 @@ impl WorkerManager {
 
     pub fn register_worker(
         &mut self,
-        address: String,
+        address: Vec<u8>,
         message_handler: Option<ProcessMessageHandle>,
         poll_handler: Option<PollHandle>,
     ) -> Result<bool, String> {
@@ -45,7 +46,7 @@ impl ProcessMessage for WorkerManager {
         enqueue_ref: Rc<RefCell<dyn EnqueueMessage>>,
     ) -> Result<bool, String> {
         let address = message.onward_route.addresses[0].address.as_string();
-        if let Some(h) = self.message_handlers.get_mut(&address) {
+        if let Some(h) = self.message_handlers.get_mut(address.as_bytes()) {
             let mut handler = h.deref().borrow_mut();
             handler.process_message(message, enqueue_ref.clone()) //rb
         } else {

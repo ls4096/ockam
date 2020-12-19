@@ -11,9 +11,7 @@ use ockam::vault::types::{
     SecretAttributes, SecretPersistence, SecretType, CURVE25519_SECRET_LENGTH,
 };
 use ockam_message_router::MessageRouter;
-use ockam_no_std_traits::{
-    PollHandle, ProcessMessageHandle, SecureChannelConnectCallback, TransportListenCallback,
-};
+use ockam_no_std_traits::{PollHandle, ProcessMessageHandle, SecureChannelConnectCallback, TransportListenCallback, EnqueueMessage};
 use ockam_queue::Queue;
 use ockam_tcp_router::tcp_router::TcpRouter;
 use ockam_vault_software::DefaultVault;
@@ -56,7 +54,7 @@ impl Node {
 
     pub fn register_worker(
         &mut self,
-        address: String,
+        address: Vec<u8>,
         message_handler: Option<ProcessMessageHandle>,
         poll_handler: Option<PollHandle>,
     ) -> Result<bool, String> {
@@ -74,6 +72,10 @@ impl Node {
         self.message_router
             .register_address_type_handler(address_type, pmh.clone());
         self.modules_to_poll.push_back(ph.clone());
+    }
+
+    pub fn get_enqueue_ref(&self) -> Result<Rc<RefCell<dyn EnqueueMessage>>, String> {
+        Ok(self.message_queue.clone())
     }
 
     pub fn run(&mut self) -> Result<(), String> {

@@ -15,21 +15,27 @@ use ockam::message::{
 use ockam::vault::types::{
     SecretAttributes, SecretPersistence, SecretType, CURVE25519_SECRET_LENGTH,
 };
+use ockam_channel_refactor::SecureChannel;
 use ockam_no_std_traits::{
     EnqueueMessage, Poll, ProcessMessage, SecureChannelConnectCallback, TransportListenCallback,
 };
 use ockam_tcp_router::tcp_router::TcpRouter;
 use ockam_vault_software::DefaultVault;
 use std::net::SocketAddr;
-use std::str::FromStr;
+use std::str::*;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use ockam_channel_refactor::SecureChannel;
+use std::any::Any;
 
 pub struct TestWorker {
     address: String,
     text: String,
     count: usize,
+}
+
+enum State {
+    SendM1,
+    ReceiveM1,
 }
 
 impl TestWorker {
@@ -125,17 +131,7 @@ impl TransportListenCallback for TestTcpWorker {
         peer_address: Address,
     ) -> Result<bool, String> {
         // create the vault and key exchanger
-        let vault = Arc::new(Mutex::new(DefaultVault::default()));
-        let attributes = SecretAttributes {
-            stype: SecretType::Curve25519,
-            persistence: SecretPersistence::Persistent,
-            length: CURVE25519_SECRET_LENGTH,
-        };
-        let new_key_exchanger = XXNewKeyExchanger::new(
-            CipherSuite::Curve25519AesGcmSha256,
-            vault.clone(),
-            vault.clone(),
-        );
+
         Ok(true)
     }
 }
@@ -250,18 +246,35 @@ pub fn responder_thread() {
     let mut node = Rc::new(RefCell::new(Node::new("responder").unwrap()));
 
     // create test worker and register
-    let worker_address = hex_vec_from_str("00112233".into()).unwrap();
-    let worker = Rc::new(RefCell::new(
+    let worker_address = "00112233".as_bytes().to_vec();
+    let worker_ref = Rc::new(RefCell::new(
         (TestTcpWorker::new(node.clone(), false, worker_address.clone(), None)),
     ));
     let n = node.clone();
     let mut n = n.deref().borrow_mut();
-    n.register_worker("00112233".to_string(), Some(worker.clone()), None);
+    n.register_worker("00112233".as_bytes().to_vec(), Some(worker_ref.clone()), None);
 
-    // create and register the transport
-    let mut tcp_router = TcpRouter::new(Some("127.0.0.1:4052"), Some(worker.clone())).unwrap();
+    // create transport and register
+    let mut tcp_router = TcpRouter::new(Some("127.0.0.1:4052"), Some(worker_ref.clone())).unwrap();
     let tcp_router = Rc::new(RefCell::new(tcp_router));
     n.register_transport(AddressType::Tcp, tcp_router.clone(), tcp_router.clone());
+
+    // create channel listener (responder) and register
+    let vault = Arc::new(Mutex::new(DefaultVault::default()));
+    let attributes = SecretAttributes {
+        stype: SecretType::Curve25519,
+        persistence: SecretPersistence::Persistent,
+        length: CURVE25519_SECRET_LENGTH,
+    };
+    let new_key_exchanger = XXNewKeyExchanger::new(
+        CipherSuite::Curve25519AesGcmSha256,
+        vault.clone(),
+        vault.clone(),
+    );
+
+    let channel_listener =
+        Rc::new(RefCell::new(SecureChannel::listen(vault, new_key_exchanger, None, None,  worker_ref.clone()).unwrap()));
+    n.register_worker(vec![0u8;4], Some(channel_listener.clone()), None);
 
     n.run();
 }
@@ -271,12 +284,12 @@ pub fn initiator_thread() {
     thread::sleep(time::Duration::from_millis(1000));
 
     // create the node
-    let mut node = Rc::new(RefCell::new(Node::new("initiator").unwrap()));
+    let mut node_ref = Rc::new(RefCell::new(Node::new("initiator").unwrap()));
 
     // create test worker and register
     let worker_address = hex_vec_from_str("aabbccdd".into()).unwrap();
     let worker = TestTcpWorker::new(
-        node.clone(),
+        node_ref.clone(),
         true,
         worker_address,
         Some(Address::TcpAddress(
@@ -284,14 +297,15 @@ pub fn initiator_thread() {
         )),
     );
     let worker_ref = Rc::new(RefCell::new(worker));
-    let mut n = node.deref().borrow_mut();
+    let mut n = node_ref.clone();
+    let mut n = n.deref().borrow_mut();
     n.register_worker(
-        "aabbccdd".to_string(),
+        "aabbccdd".as_bytes().to_vec(),
         Some(worker_ref.clone()),
         Some(worker_ref.clone()),
     );
 
-    // create and register the transport
+    // create the transport and register
     let mut tcp_router = TcpRouter::new(None, None).unwrap();
     let tcp_router = Rc::new(RefCell::new(tcp_router));
     n.register_transport(AddressType::Tcp, tcp_router.clone(), tcp_router.clone());
@@ -304,7 +318,6 @@ pub fn initiator_thread() {
         tcp_connection
     };
 
-    // create vault, key exchanger, and request channel
     // create the vault and key exchanger
     let vault = Arc::new(Mutex::new(DefaultVault::default()));
     let attributes = SecretAttributes {
@@ -317,19 +330,22 @@ pub fn initiator_thread() {
         vault.clone(),
         vault.clone(),
     );
+
+    // initiate channel and register
     let channel = SecureChannel::create(
-        vault,
-        new_key_exchanger,
+         vault,
+         new_key_exchanger, //todo make this an enum with "default" as one option
         None,
         None,
-        tcp_connection,
+        Route{addresses:vec![RouterAddress::from_address(tcp_connection).unwrap()]},
         worker_ref.clone(),
-    ).unwrap();
+        n.get_enqueue_ref().unwrap(),
+    )
+    .unwrap();
     let channel_address = channel.address_as_string();
     let channel_ref = Rc::new(RefCell::new(channel));
     let ch = channel_ref.clone();
-
-    n.register_worker(channel_address, Some(ch.clone()), Some(ch.clone()));
+    n.register_worker(channel_address.as_bytes().to_vec(), Some(ch.clone()), Some(ch.clone()));
 
     n.run();
     return;
