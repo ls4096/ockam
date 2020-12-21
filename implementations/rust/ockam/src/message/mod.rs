@@ -419,7 +419,7 @@ impl Route {
                     println!("Tcp: {}", tcp.to_string());
                 }
                 Address::WorkerAddress(wa) => {
-                    println!("worker: {}", hex::encode(wa));
+                    println!("Worker: {:?}", wa);
                 }
                 Address::ChannelAddress(ca) => {
                     println!("Channel: {}", hex::encode(ca));
@@ -498,14 +498,11 @@ impl RouterAddress {
         }
     }
     pub fn worker_router_address_from_str(a: &str) -> Result<RouterAddress, String> {
-        match hex_vec_from_str(a) {
-            Ok(h) => Ok(RouterAddress {
-                a_type: AddressType::Worker,
-                length: h.len() as u8,
-                address: Address::WorkerAddress(h),
-            }),
-            Err(_unused) => Err("invalid hex input".to_string()),
-        }
+        Ok(RouterAddress {
+            a_type: AddressType::Worker,
+            length: a.len() as u8,
+            address: Address::WorkerAddress(a.as_bytes().to_vec()),
+        })
     }
 }
 

@@ -3,88 +3,96 @@
 extern crate alloc;
 use alloc::collections::VecDeque;
 use alloc::rc::Rc;
-use alloc::string::String;
+use alloc::string::{String, ToString};
+use alloc::vec;
+use alloc::vec::Vec;
 use core::cell::RefCell;
 use core::ops::Deref;
+use hashbrown::HashMap;
 use libc_print::*;
-use ockam::message::{AddressType, Message, RouterAddress, Route};
-use ockam::system::commands::WorkerCommand::AddLine;
-use ockam_no_std_traits::{EnqueueMessage, Poll, ProcessMessage, ProcessMessageHandle};
-use ockam_queue::Queue;
 use ockam::message::Address::WorkerAddress;
-use alloc::vec::Vec;
-use alloc::vec;
+use ockam::message::{Address, AddressType, Message, Route, RouterAddress};
+use ockam::system::commands::WorkerCommand::AddLine;
+use ockam_no_std_traits::{Poll, ProcessMessage, ProcessMessageHandle, WorkerRegistration};
 
 pub struct MessageRouter {
-    handlers: [Option<ProcessMessageHandle>; 256],
+    message_queue: VecDeque<Message>,
+    handlers: HashMap<Vec<u8>, ProcessMessageHandle>,
 }
-
-const INIT_TO_NO_RECORD: Option<ProcessMessageHandle> = None;
 
 impl MessageRouter {
     pub fn new() -> Result<Self, String> {
         Ok(MessageRouter {
-            handlers: [INIT_TO_NO_RECORD; 256],
+            message_queue: VecDeque::new(),
+            handlers: HashMap::new(),
         })
     }
 
-    pub fn register_address_type_handler(
+    pub fn enqueue_messages(&mut self, mut messages: Vec<Message>) -> Result<bool, String> {
+        self.message_queue.append(&mut messages.into());
+        Ok(true)
+    }
+
+    pub fn register_message_handler(
         &mut self,
-        address_type: AddressType,
+        address: Address,
         handler: ProcessMessageHandle,
     ) -> Result<bool, String> {
-        self.handlers[address_type as usize] = Some(handler);
+        self.handlers
+            .insert(Vec::from(address.as_string()), handler.clone());
         Ok(true)
     }
 
     pub fn poll(
-        &self,
-        mut enqueue_message_ref: Rc<RefCell<Queue<Message>>>,
-    ) -> Result<bool, String> {
+        &mut self,
+    ) -> Result<(bool, Option<Vec<Message>>, Option<Vec<WorkerRegistration>>), String> {
+        let mut keep_going = true;
+        let mut messages: Vec<Message> = Vec::new();
+        let mut worker_registrations: Vec<WorkerRegistration> = Vec::new();
         loop {
-            {
-                let mut message: Option<Message> = {
-                    let mut q = enqueue_message_ref.clone();
-                    let mut q = q.deref().borrow_mut();
-                    q.queue.remove(0)
-                };
-                match message {
-                    Some(mut m) => {
-                        if m.onward_route.addresses.len() == 0 {
-                            let address0 = WorkerAddress(vec![0u8;4]);
-                            m.onward_route = Route{addresses: vec![RouterAddress::from_address(address0).unwrap()]};
-                        }
-                        libc_println!("Message router");
-                        m.onward_route.print_route();
-                        libc_println!("...");
-                        m.return_route.print_route();
-                        let address_type = m.onward_route.addresses[0].a_type as usize;
-                        match &self.handlers[address_type] {
-                            Some(h) => {
-                                let handler = h.clone();
-                                let mut handler = handler.deref().borrow_mut();
-                                match handler.process_message(m, enqueue_message_ref.clone()) {
-                                    Ok(keep_going) => {
-                                        if !keep_going {
-                                            return Ok(false);
-                                        }
-                                    }
-                                    Err(s) => {
-                                        return Err(s);
-                                    }
-                                }
+            let mut message: Option<Message> = self.message_queue.remove(0);
+            match message {
+                Some(mut m) => {
+                    if m.onward_route.addresses.len() == 0 {
+                        return Err("No route supplied".into());
+                    }
+                    let mut address = m.onward_route.addresses[0].address.as_string();
+
+                    // todo this is special-case handling for the TcpRouter (obviously).
+                    // The TCP router (there is only ever one per node) always has
+                    // the 0.0.0.0:0 address and it handles all tcp addresses.
+                    if matches!(m.onward_route.addresses[0].address, Address::TcpAddress(a)) {
+                        address = "0.0.0.0:0".to_string();
+                    }
+
+                    match self.handlers.get_mut(&address.as_bytes().to_vec()) {
+                        Some(h) => {
+                            let handler = h.clone();
+                            let mut handler = handler.deref().borrow_mut();
+                            let (status, new_messages_opt, new_workers_opt) =
+                                handler.process_message(m)?;
+                            if let Some(mut m) = new_messages_opt {
+                                messages.append(&mut m);
                             }
-                            None => {
-                                return Err("no handler for message type".into());
+                            if let Some(mut w) = new_workers_opt {
+                                worker_registrations.append(&mut w);
+                            }
+                            if !status {
+                                keep_going = false;
+                                break;
                             }
                         }
-                    }
-                    None => {
-                        break;
-                    }
+                        None => {
+                            return Err("no handler for message type".into());
+                        }
+                    };
+                }
+                None => {
+                    break;
                 }
             }
         }
-        Ok(true)
+        self.message_queue.append(&mut messages.into());
+        Ok((keep_going, None, Some(worker_registrations)))
     }
 }

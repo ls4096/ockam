@@ -15,17 +15,16 @@ use ockam::message::{
 use ockam::vault::types::{
     SecretAttributes, SecretPersistence, SecretType, CURVE25519_SECRET_LENGTH,
 };
-use ockam_channel_refactor::SecureChannel;
 use ockam_no_std_traits::{
-    EnqueueMessage, Poll, ProcessMessage, SecureChannelConnectCallback, TransportListenCallback,
+    Poll, ProcessMessage, SecureChannelConnectCallback, TransportListenCallback, WorkerRegistration,
 };
 use ockam_tcp_router::tcp_router::TcpRouter;
 use ockam_vault_software::DefaultVault;
+use std::any::Any;
 use std::net::SocketAddr;
 use std::str::*;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::any::Any;
 
 pub struct TestWorker {
     address: String,
@@ -51,14 +50,13 @@ impl TestWorker {
 impl Poll for TestWorker {
     fn poll(
         &mut self,
-        enqueue_message_ref: Rc<RefCell<dyn EnqueueMessage>>,
-    ) -> Result<bool, String> {
+    ) -> Result<(bool, Option<Vec<Message>>, Option<Vec<WorkerRegistration>>), String> {
         let msg_text = "sent to you by TestWorker".as_bytes();
         let mut onward_addresses = Vec::new();
 
         onward_addresses
             .push(RouterAddress::worker_router_address_from_str("aabbccdd".into()).unwrap());
-        let mut return_addresses = Vec::new();
+        let mut return_addresses: Vec<RouterAddress> = Vec::new();
         return_addresses
             .push(RouterAddress::worker_router_address_from_str(&self.address).unwrap());
         let m = Message {
@@ -71,9 +69,7 @@ impl Poll for TestWorker {
             message_type: MessageType::Payload,
             message_body: msg_text.to_vec(),
         };
-        let mut q = enqueue_message_ref.deref().borrow_mut();
-        q.enqueue_message(m)?;
-        Ok(true)
+        Ok((true, Some(vec![m]), None))
     }
 }
 
@@ -81,13 +77,12 @@ impl ProcessMessage for TestWorker {
     fn process_message(
         &mut self,
         message: Message,
-        _q_ref: Rc<RefCell<dyn EnqueueMessage>>,
-    ) -> Result<bool, String> {
+    ) -> Result<(bool, Option<Vec<Message>>, Option<Vec<WorkerRegistration>>), String> {
         self.count += 1;
-        if self.count > 3 {
-            return Ok(false);
+        if self.count > 10 {
+            return Ok((false, None, None));
         }
-        Ok(true)
+        Ok((true, None, None))
     }
 }
 
@@ -102,7 +97,7 @@ fn test_node() {
     )));
 
     node.register_worker(
-        "aabbccdd".into(),
+        Address::WorkerAddress("aabbccdd".as_bytes().to_vec()),
         Some(test_worker.clone()),
         Some(test_worker.clone()),
     )
@@ -120,7 +115,7 @@ pub struct TestTcpWorker {
     is_initiator: bool,
     count: usize,
     remote: Address,
-    local_address: Vec<u8>,
+    local_address: Address,
     channel_address: Option<Address>,
 }
 
@@ -129,25 +124,25 @@ impl TransportListenCallback for TestTcpWorker {
         &mut self,
         local_address: Address,
         peer_address: Address,
-    ) -> Result<bool, String> {
+    ) -> Result<(bool, Option<Vec<Message>>, Option<Vec<WorkerRegistration>>), String> {
         // create the vault and key exchanger
 
-        Ok(true)
+        Ok((true, None, None))
     }
 }
 
-impl SecureChannelConnectCallback for TestTcpWorker {
-    fn secure_channel_callback(&mut self, address: Address) -> Result<bool, String> {
-        println!("in channel callback");
-        Ok(true)
-    }
-}
+// impl SecureChannelConnectCallback for TestTcpWorker {
+//     fn secure_channel_callback(&mut self, address: Address) -> Result<bool, String> {
+//         println!("in channel callback");
+//         Ok(true)
+//     }
+// }
 
 impl TestTcpWorker {
     pub fn new(
         node: Rc<RefCell<Node>>,
         is_initiator: bool,
-        local_address: Vec<u8>,
+        local_address: Address,
         opt_remote: Option<Address>,
     ) -> Self {
         if let Some(r) = opt_remote {
@@ -175,29 +170,29 @@ impl TestTcpWorker {
 impl Poll for TestTcpWorker {
     fn poll(
         &mut self,
-        enqueue_message_ref: Rc<RefCell<dyn EnqueueMessage>>,
-    ) -> Result<bool, String> {
+    ) -> Result<(bool, Option<Vec<Message>>, Option<Vec<WorkerRegistration>>), String> {
         if self.count == 0 && self.is_initiator {
+            self.count += 1;
+            println!("in initiator poll for TestTcpWorker");
             let mut route = Route {
                 addresses: vec![
                     RouterAddress::tcp_router_address_from_str("127.0.0.1:4052").unwrap(),
                     RouterAddress::worker_router_address_from_str("00112233").unwrap(),
                 ],
             };
-            let addr = Address::WorkerAddress(self.local_address.clone());
             let m = Message {
                 onward_route: route,
                 return_route: Route {
-                    addresses: vec![RouterAddress::from_address(addr).unwrap()],
+                    addresses: vec![
+                        RouterAddress::from_address(self.local_address.clone()).unwrap()
+                    ],
                 },
                 message_type: MessageType::Payload,
                 message_body: "hello".as_bytes().to_vec(),
             };
-            let mut q = enqueue_message_ref.deref().borrow_mut();
-            q.enqueue_message(m)?;
+            return Ok((true, Some(vec![m]), None));
         }
-        self.count += 1;
-        Ok(true)
+        Ok((true, None, None))
     }
 }
 
@@ -205,8 +200,7 @@ impl ProcessMessage for TestTcpWorker {
     fn process_message(
         &mut self,
         message: Message,
-        enqueue_message_ref: Rc<RefCell<dyn EnqueueMessage>>,
-    ) -> Result<bool, String> {
+    ) -> Result<(bool, Option<Vec<Message>>, Option<Vec<WorkerRegistration>>), String> {
         if self.is_initiator {
             println!(
                 "Initiator: message received: {}",
@@ -219,24 +213,20 @@ impl ProcessMessage for TestTcpWorker {
             );
         }
         if self.count < 5 {
-            let addr = Address::WorkerAddress(self.local_address.clone());
             let m = Message {
                 onward_route: message.return_route.clone(),
                 return_route: Route {
-                    addresses: vec![RouterAddress::from_address(addr).unwrap()],
+                    addresses: vec![
+                        RouterAddress::from_address(self.local_address.clone()).unwrap()
+                    ],
                 },
                 message_type: MessageType::Payload,
                 message_body: "hello".as_bytes().to_vec(),
             };
-            {
-                let mut q = enqueue_message_ref.clone(); //rb
-                let mut q = q.deref().borrow_mut();
-                q.enqueue_message(m);
-            }
             self.count += 1;
-            Ok(true)
+            Ok((true, Some(vec![m]), None))
         } else {
-            Ok(false)
+            Ok((false, None, None))
         }
     }
 }
@@ -246,36 +236,31 @@ pub fn responder_thread() {
     let mut node = Rc::new(RefCell::new(Node::new("responder").unwrap()));
 
     // create test worker and register
-    let worker_address = "00112233".as_bytes().to_vec();
+    let worker_address = Address::WorkerAddress("00112233".as_bytes().to_vec());
     let worker_ref = Rc::new(RefCell::new(
         (TestTcpWorker::new(node.clone(), false, worker_address.clone(), None)),
     ));
     let n = node.clone();
     let mut n = n.deref().borrow_mut();
-    n.register_worker("00112233".as_bytes().to_vec(), Some(worker_ref.clone()), None);
+    n.register_worker(worker_address.clone(), Some(worker_ref.clone()), None);
 
     // create transport and register
-    let mut tcp_router = TcpRouter::new(Some("127.0.0.1:4052"), Some(worker_ref.clone())).unwrap();
-    let tcp_router = Rc::new(RefCell::new(tcp_router));
-    n.register_transport(AddressType::Tcp, tcp_router.clone(), tcp_router.clone());
+    let mut tcp_router_ref = Rc::new(RefCell::new(
+        TcpRouter::new(Some("127.0.0.1:4052"), Some(worker_ref.clone()))
+            .expect("responder failed to create tcp_router"),
+    ));
+    {
+        let tcp_router = tcp_router_ref.clone();
+        let mut tcp_router = tcp_router_ref.deref().borrow_mut();
 
-    // create channel listener (responder) and register
-    let vault = Arc::new(Mutex::new(DefaultVault::default()));
-    let attributes = SecretAttributes {
-        stype: SecretType::Curve25519,
-        persistence: SecretPersistence::Persistent,
-        length: CURVE25519_SECRET_LENGTH,
-    };
-    let new_key_exchanger = XXNewKeyExchanger::new(
-        CipherSuite::Curve25519AesGcmSha256,
-        vault.clone(),
-        vault.clone(),
-    );
+        n.register_worker(
+            tcp_router.address(),
+            Some(tcp_router_ref.clone()),
+            Some(tcp_router_ref.clone()),
+        );
+    }
 
-    let channel_listener =
-        Rc::new(RefCell::new(SecureChannel::listen(vault, new_key_exchanger, None, None,  worker_ref.clone()).unwrap()));
-    n.register_worker(vec![0u8;4], Some(channel_listener.clone()), None);
-
+    println!("Responder node running");
     n.run();
 }
 
@@ -287,11 +272,11 @@ pub fn initiator_thread() {
     let mut node_ref = Rc::new(RefCell::new(Node::new("initiator").unwrap()));
 
     // create test worker and register
-    let worker_address = hex_vec_from_str("aabbccdd".into()).unwrap();
+    let worker_address = Address::WorkerAddress("aabbccdd".as_bytes().to_vec());
     let worker = TestTcpWorker::new(
         node_ref.clone(),
         true,
-        worker_address,
+        worker_address.clone(),
         Some(Address::TcpAddress(
             SocketAddr::from_str("127.0.0.1:4052").unwrap(),
         )),
@@ -300,53 +285,30 @@ pub fn initiator_thread() {
     let mut n = node_ref.clone();
     let mut n = n.deref().borrow_mut();
     n.register_worker(
-        "aabbccdd".as_bytes().to_vec(),
+        worker_address,
         Some(worker_ref.clone()),
         Some(worker_ref.clone()),
     );
 
     // create the transport and register
-    let mut tcp_router = TcpRouter::new(None, None).unwrap();
-    let tcp_router = Rc::new(RefCell::new(tcp_router));
-    n.register_transport(AddressType::Tcp, tcp_router.clone(), tcp_router.clone());
-
-    // create connection
-    let tcp_connection = {
-        let tcp = tcp_router.clone();
-        let mut tcp = tcp.deref().borrow_mut();
-        let tcp_connection = tcp.try_connect("127.0.0.1:4052", Some(500)).unwrap();
-        tcp_connection
-    };
-
-    // create the vault and key exchanger
-    let vault = Arc::new(Mutex::new(DefaultVault::default()));
-    let attributes = SecretAttributes {
-        stype: SecretType::Curve25519,
-        persistence: SecretPersistence::Persistent,
-        length: CURVE25519_SECRET_LENGTH,
-    };
-    let new_key_exchanger = XXNewKeyExchanger::new(
-        CipherSuite::Curve25519AesGcmSha256,
-        vault.clone(),
-        vault.clone(),
-    );
-
-    // initiate channel and register
-    let channel = SecureChannel::create(
-         vault,
-         new_key_exchanger, //todo make this an enum with "default" as one option
-        None,
-        None,
-        Route{addresses:vec![RouterAddress::from_address(tcp_connection).unwrap()]},
-        worker_ref.clone(),
-        n.get_enqueue_ref().unwrap(),
-    )
-    .unwrap();
-    let channel_address = channel.address_as_string();
-    let channel_ref = Rc::new(RefCell::new(channel));
-    let ch = channel_ref.clone();
-    n.register_worker(channel_address.as_bytes().to_vec(), Some(ch.clone()), Some(ch.clone()));
-
+    let mut tcp_router_ref = Rc::new(RefCell::new(
+        TcpRouter::new(None, None).expect("initiator failed to create tcp_router"),
+    ));
+    {
+        let tcp_router = tcp_router_ref.clone();
+        let mut tcp_router = tcp_router.deref().borrow_mut();
+        n.register_worker(
+            tcp_router.address(),
+            Some(tcp_router_ref.clone()),
+            Some(tcp_router_ref.clone()),
+        );
+        // create connection
+        let tcp_connection = tcp_router
+            .try_connect("127.0.0.1:4052", Some(500))
+            .expect("tcp.try_connect failed");
+        println!("tcp connection established");
+    }
+    println!("initiator node running");
     n.run();
     return;
 }

@@ -17,11 +17,9 @@ ockam-tcp-router = { version = "0.1", path = "../tcp_router" }
 ockam-common = { version = "0.1", path = "../common"}
 ockam-kex = { version = "0.1", path = "../kex" }
 ockam-vault-software = { version = "0.1", path = "../vault/software" }
-ockam-no-std-traits = { version = "0.1", path = "../no_std_traits" }
-ockam-queue = { version = "0.1", path = "../queue" }
 ockam-message-router = { version = "0.1", path = "../message_router" }
 ockam-worker-manager = { version = "0.1", path = "../worker_manager" }
-ockam-channel-refactor = { version = "0.1", path = "../channel_refactor" }
+ockam-no-std-traits = { version = "0.1", path = "../no_std_traits" }
 
 hex = "0.4.2"
 structopt = { version = "0.3.20", default-features = false }

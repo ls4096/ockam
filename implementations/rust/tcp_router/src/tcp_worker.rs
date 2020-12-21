@@ -6,7 +6,7 @@ use core::ops::Deref;
 use ockam::message::{
     varint_size, Address, AddressType, Codec, Message, RouterAddress, MAX_MESSAGE_SIZE,
 };
-use ockam_no_std_traits::{EnqueueMessage, Poll, ProcessMessage};
+use ockam_no_std_traits::{Poll, ProcessMessage, WorkerRegistration};
 use std::io;
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -22,8 +22,7 @@ impl ProcessMessage for TcpWorker {
     fn process_message(
         &mut self,
         mut message: Message,
-        queue_ref: Rc<RefCell<dyn EnqueueMessage>>,
-    ) -> Result<bool, String> {
+    ) -> Result<(bool, Option<Vec<Message>>, Option<Vec<WorkerRegistration>>), String> {
         message.onward_route.addresses.remove(0);
         let local_address = Address::TcpAddress(self.stream.local_addr().unwrap());
         message
@@ -40,7 +39,7 @@ impl ProcessMessage for TcpWorker {
             .write(msg_len.as_slice())
             .expect("tcp write failed");
         return match self.stream.write(v.as_slice()) {
-            Ok(_) => Ok(true),
+            Ok(_) => Ok((true, None, None)),
             Err(_) => Err("tcp write failed".into()),
         };
     }
@@ -49,14 +48,13 @@ impl ProcessMessage for TcpWorker {
 impl Poll for TcpWorker {
     fn poll(
         &mut self,
-        enqueue_message_ref: Rc<RefCell<dyn EnqueueMessage>>,
-    ) -> Result<bool, String> {
+    ) -> Result<(bool, Option<Vec<Message>>, Option<Vec<WorkerRegistration>>), String> {
         self.stream.set_nonblocking(true);
         let mut tcp_buff: [u8; MAX_MESSAGE_SIZE] = [0u8; MAX_MESSAGE_SIZE];
         match self.stream.read(&mut tcp_buff[0..]) {
             Ok(mut tcp_len) => {
                 if tcp_len == 0 {
-                    return Ok(false);
+                    return Ok((false, None, None));
                 }
                 let mut tcp_vec = tcp_buff[0..tcp_len].to_vec();
                 while tcp_vec.len() > 0 {
@@ -74,7 +72,7 @@ impl Poll for TcpWorker {
                         self.message[self.offset..(self.offset + tcp_vec.len())]
                             .clone_from_slice(&tcp_vec);
                         self.offset += tcp_vec.len();
-                        return Ok(false);
+                        return Ok((false, None, None));
                     }
 
                     // we have a complete message, route it
@@ -82,14 +80,16 @@ impl Poll for TcpWorker {
                     self.message[self.offset..self.message_length]
                         .clone_from_slice(&tcp_vec[0..bytes_to_clone]);
                     tcp_vec = tcp_vec.split_off(bytes_to_clone);
-                    self.decode_and_route_message(enqueue_message_ref.clone())?;
-                    self.offset = 0;
-                    self.message_length = 0;
+                    if let Some(m) = self.decode_message()? {
+                        self.offset = 0;
+                        self.message_length = 0;
+                        return Ok((true, Some(vec![m]), None));
+                    }
                 }
-                Ok(true)
+                Ok((true, None, None))
             }
             Err(e) => match e.kind() {
-                io::ErrorKind::WouldBlock => Ok(true),
+                io::ErrorKind::WouldBlock => Ok((true, None, None)),
                 _ => Err("***tcp receive failed".to_string()),
             },
         }
@@ -119,10 +119,7 @@ impl TcpWorker {
         }
     }
 
-    fn decode_and_route_message(
-        &mut self,
-        enqueue_message_ref: Rc<RefCell<dyn EnqueueMessage>>,
-    ) -> Result<bool, String> {
+    fn decode_message(&mut self) -> Result<Option<Message>, String> {
         match Message::decode(&self.message[0..self.message_length]) {
             Ok((mut m_decoded, _)) => {
                 // fix up return tcp address with nat-ed address
@@ -134,12 +131,9 @@ impl TcpWorker {
                         || (m_decoded.onward_route.addresses[0].a_type == AddressType::Tcp))
                 {
                     self.send_message(m_decoded);
-                    Ok(true)
+                    Ok(None)
                 } else {
-                    let em = enqueue_message_ref.clone();
-                    let mut em = em.deref().borrow_mut();
-                    em.enqueue_message(m_decoded);
-                    Ok(true)
+                    Ok(Some(m_decoded))
                 }
             }
             Err(_) => Err("message decode failed".into()),
